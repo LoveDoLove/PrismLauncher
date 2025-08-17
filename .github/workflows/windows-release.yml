@@ -1,0 +1,83 @@
+# Windows Release Workflow for PrismLauncher
+# Based on GitHub Actions starter workflow conventions
+
+name: Windows Release
+
+on:
+  push:
+    tags:
+      - "*"
+  workflow_dispatch:
+
+jobs:
+  build_release:
+    name: Build Release
+    uses: ./.github/workflows/windows-build.yml
+    with:
+      build_type: Release
+    secrets:
+      WINDOWS_CODESIGN_CERT: ${{ secrets.WINDOWS_CODESIGN_CERT }}
+      WINDOWS_CODESIGN_PASSWORD: ${{ secrets.WINDOWS_CODESIGN_PASSWORD }}
+
+  create_release:
+    needs: build_release
+    runs-on: windows-2022
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+          path: "PrismLauncher-source"
+          fetch-depth: 0
+          fetch-tags: true
+      - name: Set VERSION (tag or latest remote)
+        id: set_version
+        shell: bash
+        run: |
+          cd PrismLauncher-source
+          tag=""
+          # Always get the latest remote tag from GitHub API (never use local tag)
+          echo "Fetching latest remote tag from GitHub API..."
+          tag=$(curl -s "https://api.github.com/repos/PrismLauncher/PrismLauncher/tags" | jq -r '.[0].name' 2>/dev/null || true)
+          # If jq fails, try PowerShell (always available on Windows)
+          if [[ -z "$tag" || "$tag" == "null" ]]; then
+            echo "jq failed, trying PowerShell..."
+            tag=$(powershell -Command "
+              try {
+                \$response = Invoke-RestMethod -Uri 'https://api.github.com/repos/PrismLauncher/PrismLauncher/tags'
+                if (\$response -and \$response.Count -gt 0) {
+                  \$response[0].name
+                }
+              } catch {
+                Write-Error \$_.Exception.Message
+              }
+            " 2>/dev/null || true)
+          fi
+          if [[ -z "$tag" || "$tag" == "null" ]]; then
+            echo "ERROR: No remote tag found using any method!" >&2
+            exit 1
+          fi
+          echo "Final version: $tag"
+          echo "version=$tag" >> $GITHUB_OUTPUT
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: PrismLauncher-Windows-MinGW-w64-${{ steps.set_version.outputs.version }}-Release
+          path: PrismLauncher-Windows-MinGW-w64-${{ steps.set_version.outputs.version }}-Release
+      - name: Package Windows artifact
+        shell: pwsh
+        run: |
+          $src = "PrismLauncher-Windows-MinGW-w64-${{ steps.set_version.outputs.version }}-Release"
+          $dst = "PrismLauncher-Windows-MinGW-w64-${{ steps.set_version.outputs.version }}.zip"
+          Compress-Archive -Path "$src\*" -DestinationPath $dst -Force
+      - name: Create release
+        id: create_release
+        uses: softprops/action-gh-release@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          tag_name: ${{ steps.set_version.outputs.version }}
+          name: Prism Launcher ${{ steps.set_version.outputs.version }}
+          draft: false
+          prerelease: false
+          files: |
+            PrismLauncher-Windows-MinGW-w64-${{ steps.set_version.outputs.version }}.zip
