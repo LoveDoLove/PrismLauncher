@@ -1,0 +1,122 @@
+# Windows Portable Release Workflow for PrismLauncher
+# Creates portable Windows releases without any signing process
+
+name: Windows Portable Release
+
+on:
+  push:
+    tags:
+      - "*"
+  workflow_dispatch:
+
+jobs:
+  build_release:
+    name: Build Portable Release
+    uses: ./.github/workflows/windows-portable-build.yml
+    with:
+      build_type: Release
+
+  create_release:
+    needs: build_release
+    runs-on: windows-2022
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+          path: "PrismLauncher-source"
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Set VERSION (tag or latest remote)
+        id: set_version
+        shell: bash
+        run: |
+          cd PrismLauncher-source
+          tag=""
+          # Check if triggered by tag push
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            tag="${{ github.ref_name }}"
+            echo "Using tag from trigger: $tag"
+          else
+            # Fallback to latest remote tag from GitHub API
+            echo "Fetching latest remote tag from GitHub API..."
+            tag=$(curl -s "https://api.github.com/repos/${{ github.repository }}/tags" | jq -r '.[0].name' 2>/dev/null || true)
+            # If jq fails, try PowerShell (always available on Windows)
+            if [[ -z "$tag" || "$tag" == "null" ]]; then
+              echo "jq failed, trying PowerShell..."
+              tag=$(powershell -Command "
+                try {
+                  \$response = Invoke-RestMethod -Uri 'https://api.github.com/repos/${{ github.repository }}/tags'
+                  if (\$response -and \$response.Count -gt 0) {
+                    \$response[0].name
+                  }
+                } catch {
+                  Write-Error \$_.Exception.Message
+                }
+              " 2>/dev/null || true)
+            fi
+            # Fallback to commit SHA if no tags
+            if [[ -z "$tag" || "$tag" == "null" ]]; then
+              echo "No remote tags found, using commit SHA..."
+              tag="dev-${GITHUB_SHA:0:7}"
+            fi
+          fi
+          echo "Final version: $tag"
+          echo "version=$tag" >> $GITHUB_OUTPUT
+
+      - name: Download artifacts (Standard)
+        uses: actions/download-artifact@v4
+        with:
+          name: PrismLauncher-Windows-MinGW-w64-${{ steps.set_version.outputs.version }}-Release
+          path: PrismLauncher-Windows-MinGW-w64-${{ steps.set_version.outputs.version }}-Release
+
+      - name: Download artifacts (Portable)
+        uses: actions/download-artifact@v4
+        with:
+          name: PrismLauncher-Windows-MinGW-w64-Portable-${{ steps.set_version.outputs.version }}-Release
+          path: PrismLauncher-Windows-MinGW-w64-Portable-${{ steps.set_version.outputs.version }}-Release
+
+      - name: Package Windows artifacts
+        shell: pwsh
+        run: |
+          # Package standard version
+          $src_standard = "PrismLauncher-Windows-MinGW-w64-${{ steps.set_version.outputs.version }}-Release"
+          $dst_standard = "PrismLauncher-Windows-MinGW-w64-${{ steps.set_version.outputs.version }}.zip"
+          Compress-Archive -Path "$src_standard\*" -DestinationPath $dst_standard -Force
+          
+          # Package portable version
+          $src_portable = "PrismLauncher-Windows-MinGW-w64-Portable-${{ steps.set_version.outputs.version }}-Release"
+          $dst_portable = "PrismLauncher-Windows-MinGW-w64-Portable-${{ steps.set_version.outputs.version }}.zip"
+          Compress-Archive -Path "$src_portable\*" -DestinationPath $dst_portable -Force
+          
+          # Show file sizes
+          Get-ChildItem *.zip | ForEach-Object {
+            Write-Host "$($_.Name): $([math]::Round($_.Length / 1MB, 2)) MB"
+          }
+
+      - name: Create release
+        id: create_release
+        uses: softprops/action-gh-release@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          tag_name: ${{ steps.set_version.outputs.version }}
+          name: Prism Launcher ${{ steps.set_version.outputs.version }} (Portable - Unsigned)
+          draft: false
+          prerelease: false
+          body: |
+            ## Windows Portable Builds (No Code Signing)
+            
+            This is an unsigned portable build for Windows.
+            
+            ### Available Downloads:
+            - **Standard Build**: For regular installation
+            - **Portable Build**: Run directly without installation, stores data in application directory
+            
+            ### Note:
+            These builds are NOT code-signed. Windows may show a warning when running the executable.
+            This is normal for unsigned software. You can safely ignore the warning if you trust the source.
+            
+          files: |
+            PrismLauncher-Windows-MinGW-w64-${{ steps.set_version.outputs.version }}.zip
+            PrismLauncher-Windows-MinGW-w64-Portable-${{ steps.set_version.outputs.version }}.zip
