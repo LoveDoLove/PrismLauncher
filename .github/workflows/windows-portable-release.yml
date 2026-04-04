@@ -77,6 +77,12 @@ jobs:
           name: PrismLauncher-Windows-MinGW-w64-Portable-${{ steps.set_version.outputs.version }}-Release
           path: PrismLauncher-Windows-MinGW-w64-Portable-${{ steps.set_version.outputs.version }}-Release
 
+      - name: Download artifacts (Installer)
+        uses: actions/download-artifact@v4
+        with:
+          name: PrismLauncher-Windows-MinGW-w64-Setup-${{ steps.set_version.outputs.version }}-Release
+          path: PrismLauncher-Windows-MinGW-w64-Setup-${{ steps.set_version.outputs.version }}-Release
+
       - name: Package Windows artifacts
         shell: pwsh
         run: |
@@ -120,3 +126,4 @@ jobs:
           files: |
             PrismLauncher-Windows-MinGW-w64-${{ steps.set_version.outputs.version }}.zip
             PrismLauncher-Windows-MinGW-w64-Portable-${{ steps.set_version.outputs.version }}.zip
+            PrismLauncher-Windows-MinGW-w64-Setup-${{ steps.set_version.outputs.version }}-Release/PrismLauncher-Setup.exe

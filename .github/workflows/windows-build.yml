@@ -125,19 +125,22 @@ jobs:
         shell: msys2 {0}
         run: |
           ctest -E "^example64|example$" --test-dir build --output-on-failure
-      - name: Package (MinGW)
-        shell: msys2 {0}
+      - name: Ensure NSIS is installed
+        if: runner.os == 'Windows'
+        shell: pwsh
         run: |
-          cmake --install ${{ env.BUILD_DIR }}
-          touch ${{ env.INSTALL_DIR }}/manifest.txt
-          for l in $(find ${{ env.INSTALL_DIR }} -type f); do l=$(cygpath -u $l); l=${l#$(pwd)/}; l=${l#${{ env.INSTALL_DIR }}/}; l=${l#./}; echo $l; done >> ${{ env.INSTALL_DIR }}/manifest.txt
-      - name: Upload binary zip
-        uses: actions/upload-artifact@v4
+          if (-not (Get-Command makensis -ErrorAction SilentlyContinue)) {
+            choco install nsis -y
+          }
+          Get-Command makensis
+
+      - name: Package and upload artifacts
+        uses: ./.github/actions/package/windows
         with:
-          name: PrismLauncher-${{ matrix.name }}-${{ steps.version.outputs.version }}-Release
-          path: ${{ env.INSTALL_DIR }}/**
-      - name: Upload binary zip (portable)
-        uses: actions/upload-artifact@v4
-        with:
-          name: PrismLauncher-${{ matrix.name }}-Portable-${{ steps.version.outputs.version }}-Release
-          path: ${{ env.INSTALL_PORTABLE_DIR }}/**
+          version: ${{ steps.version.outputs.version }}
+          build-type: ${{ inputs.build_type }}
+          artifact-name: ${{ matrix.name }}
+          msystem: ${{ matrix.msystem }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
